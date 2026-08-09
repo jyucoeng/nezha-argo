@@ -139,8 +139,10 @@ if [[ "${DASHBOARD_UPDATE}${CLOUDFLARED_UPDATE}${IS_BACKUP}${FORCE_UPDATE}" =~ t
 
   # 在线快照数据库，压缩备份，通过 GitHub API 上传（不 clone 仓库，本地仅占 1 份备份的空间）
   if [ "$IS_BACKUP" = 'true' ]; then
-    # DAYS 兜底，避免因配置缺失导致保留逻辑失效、备份无限累积
-    : "${DAYS:=10}"
+    # DAYS 安全阀：缺失或非法时回退为 10，且最小为 2，防止保留数被算成 0 而误删全部备份
+    DAYS=${DAYS:-10}
+    [[ "$DAYS" =~ ^[0-9]+$ ]] || DAYS=10
+    [ "$DAYS" -lt 2 ] && DAYS=2
 
     # 备份通过 GitHub Contents API 上传，需要 curl
     command -v curl >/dev/null 2>&1 || error "\n curl is required for GitHub API backup, please install curl. \n"
