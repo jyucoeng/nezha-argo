@@ -1,7 +1,7 @@
 name: 🐳 publish-to-ghcr
 
 env:
-  IMAGE_NAME: ghcr.io/jyucoeng/nezha-v0
+  IMAGE_NAME: ghcr.io/jyucoeng/nezha-argo
   PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7
 
 on:
