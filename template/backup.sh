@@ -137,62 +137,67 @@ if [[ "${DASHBOARD_UPDATE}${CLOUDFLARED_UPDATE}${IS_BACKUP}${FORCE_UPDATE}" =~ t
     fi
   fi
 
-  # 克隆备份仓库，在线快照数据库，压缩备份文件，上传更新
+  # 在线快照数据库，压缩备份，通过 GitHub API 上传（不 clone 仓库，本地仅占 1 份备份的空间）
   if [ "$IS_BACKUP" = 'true' ]; then
     # DAYS 兜底，避免因配置缺失导致保留逻辑失效、备份无限累积
     : "${DAYS:=10}"
-    git config --global core.bigFileThreshold 1k
-    git config --global core.compression 0
-    git config --global advice.detachedHead false
-    git config --global pack.threads 1
-    git config --global pack.windowMemory 50m
 
-    # 保留数过大时，提示本次备份需要全量同步仓库文件、耗时会更久
-    [ "$DAYS" -gt 24 ] && hint "\n 你设置了 $DAYS 个备份（大于推荐值 24），每次备份需要全量同步仓库中的备份文件，操作耗时会更久，请耐心等待。 \n"
+    # 备份通过 GitHub Contents API 上传，需要 curl
+    command -v curl >/dev/null 2>&1 || error "\n curl is required for GitHub API backup, please install curl. \n"
 
-    # 克隆现有备份库
-    [ -d /tmp/$GH_REPO ] && rm -rf /tmp/$GH_REPO
-    git clone https://$GH_PAT@github.com/$GH_BACKUP_USER/$GH_REPO.git --depth 1 --quiet /tmp/$GH_REPO
-
-    # 压缩备份数据，只备份 data/ 目录下的 config.yaml 和 sqlite.db； resource/ 目录下名字有 custom 的自定义主题文件夹
-    if [ -d /tmp/$GH_REPO ]; then
-      # 在线快照 sqlite（.backup 原子安全），不停面板，避免停机窗口与中途重启的风险
-      SNAP_DIR=/tmp/backup_snap
-      rm -rf $SNAP_DIR && mkdir -p $SNAP_DIR/data
-      cp -f data/config.yaml $SNAP_DIR/data/ 2>/dev/null
-      sqlite3 data/sqlite.db ".backup '$SNAP_DIR/data/sqlite.db'" || {
-        rm -rf $SNAP_DIR
-        error "\n Failed to snapshot sqlite.db, stop backup. \n"
-      }
-      # 复制自定义主题，保持与原备份包相同的 data/ resource/ 目录结构
-      [ -d resource ] && find resource/ -type d -name "*custom*" -exec cp -rf --parents {} $SNAP_DIR/ \;
-
-      TIME=$(date "+%Y-%m-%d-%H:%M:%S")
-      echo "↓↓↓↓↓↓↓↓↓↓ dashboard-$TIME.tar.gz list ↓↓↓↓↓↓↓↓↓↓"
-      tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz -C $SNAP_DIR data resource 2>/dev/null || tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz -C $SNAP_DIR data
-      echo -e "↑↑↑↑↑↑↑↑↑↑ dashboard-$TIME.tar.gz list ↑↑↑↑↑↑↑↑↑↑\n\n"
+    # 在线快照 sqlite（.backup 原子安全），不停面板，避免停机窗口与中途重启的风险
+    SNAP_DIR=/tmp/backup_snap
+    rm -rf $SNAP_DIR && mkdir -p $SNAP_DIR/data
+    cp -f data/config.yaml $SNAP_DIR/data/ 2>/dev/null
+    sqlite3 data/sqlite.db ".backup '$SNAP_DIR/data/sqlite.db'" || {
       rm -rf $SNAP_DIR
+      error "\n Failed to snapshot sqlite.db, stop backup. \n"
+    }
+    # 复制自定义主题，保持与原备份包相同的 data/ resource/ 目录结构
+    [ -d resource ] && find resource/ -type d -name "*custom*" -exec cp -rf --parents {} $SNAP_DIR/ \;
 
-      # 更新备份 Github 库，仅保留最近 $DAYS 个备份；普通提交，push 只传新增文件
-      cd /tmp/$GH_REPO
-      [ -e ./.git/index.lock ] && rm -f ./.git/index.lock
-      echo "dashboard-$TIME.tar.gz" > README.md
-      find ./ -name 'dashboard-*.tar.gz' | sort | tail -n +$((DAYS+1)) | xargs rm -f
-      git config --global user.name $GH_BACKUP_USER
-      git config --global user.email $GH_EMAIL
-      git add -A
-      git commit -m "$WAY at $TIME ."
-      git push origin HEAD:main --quiet
-      IS_UPLOAD="$?"
-      cd ..
-      rm -rf $GH_REPO
-      if [ "$IS_UPLOAD" = 0 ]; then
-        echo "dashboard-$TIME.tar.gz" > $WORK_DIR/dbfile
-        info "\n Succeed to upload the backup files dashboard-$TIME.tar.gz to Github.\n"
-      else
-        rm -f $(awk -F '=' '/NO_ACTION_FLAG/{print $2; exit}' $WORK_DIR/restore.sh)*
-        hint "\n Failed to upload the backup files dashboard-$TIME.tar.gz to Github.\n"
-      fi
+    TIME=$(date "+%Y-%m-%d-%H:%M:%S")
+    FILE="dashboard-$TIME.tar.gz"
+    echo "↓↓↓↓↓↓↓↓↓↓ $FILE list ↓↓↓↓↓↓↓↓↓↓"
+    tar czvf /tmp/$FILE -C $SNAP_DIR data resource 2>/dev/null || tar czvf /tmp/$FILE -C $SNAP_DIR data
+    echo -e "↑↑↑↑↑↑↑↑↑↑ $FILE list ↑↑↑↑↑↑↑↑↑↑\n\n"
+    rm -rf $SNAP_DIR
+
+    # GitHub API
+    API="https://api.github.com/repos/$GH_BACKUP_USER/$GH_REPO"
+    AUTH="Authorization: token $GH_PAT"
+    b64() { base64 | tr -d '\n'; }
+
+    # 1. 上传新备份文件（文件名唯一，无需 sha）
+    { printf '{"message":"%s","content":"' "$WAY at $TIME"; b64 < /tmp/$FILE; printf '"}'; } > /tmp/api_payload.json
+    IS_UPLOAD=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H "$AUTH" -H "Content-Type: application/json" --data-binary @/tmp/api_payload.json "$API/contents/$FILE")
+    rm -f /tmp/api_payload.json
+
+    # 2. 更新 README.md 记录当前备份文件名（restore.sh 每分钟据此还原）
+    README_SHA=$(curl -s -H "$AUTH" "$API/contents/README.md" | awk -F '"' '{ for (i=1; i<=NF; i++) if ($i == "sha") { print $(i+2); break } }')
+    { printf '{"message":"update README","content":"'; printf '%s' "$FILE" | b64; [ -n "$README_SHA" ] && printf '","sha":"%s"' "$README_SHA"; printf '"}'; } > /tmp/api_payload.json
+    IS_README=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H "$AUTH" -H "Content-Type: application/json" --data-binary @/tmp/api_payload.json "$API/contents/README.md")
+    rm -f /tmp/api_payload.json
+
+    # 3. 删除最旧的备份，仅保留最近 $DAYS 个（用 contents API 列出的 path+sha 成对删除）
+    curl -s -H "$AUTH" "$API/contents/" | awk -F '"' '
+      { for (i=1; i<=NF; i++) {
+          if ($i == "path")            { p = $(i+2) }
+          else if ($i == "sha" && p ~ /\.tar\.gz$/) { print p, $(i+2); p = "" }
+        }
+      }' | sort | tail -n +$((DAYS+1)) | while read -r OLD SHA; do
+      [ -z "$OLD" ] && continue
+      curl -s -o /dev/null -X DELETE -H "$AUTH" -H "Content-Type: application/json" -d "{\"message\":\"delete $OLD\",\"sha\":\"$SHA\"}" "$API/contents/$OLD"
+    done
+
+    # 上传与 README 更新都返回 2xx 才算成功
+    if [[ "$IS_UPLOAD" =~ ^2[0-9][0-9]$ && "$IS_README" =~ ^2[0-9][0-9]$ ]]; then
+      echo "$FILE" > $WORK_DIR/dbfile
+      rm -f /tmp/$FILE
+      info "\n Succeed to upload the backup file $FILE to Github.\n"
+    else
+      rm -f /tmp/$FILE $(awk -F '=' '/NO_ACTION_FLAG/{print $2; exit}' $WORK_DIR/restore.sh)*
+      hint "\n Failed to upload the backup file $FILE to Github. (upload: $IS_UPLOAD, README: $IS_README)\n"
     fi
   fi
 fi
