@@ -6,11 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
+  # 各平台并行构建，每个平台一个独立 runner
+  build:
+    name: Build ${{ matrix.arch }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+          - arch: armv7
+            platform: linux/arm/v7
 
     steps:
       - name: ⬇️ Checkout Repository
@@ -18,9 +30,8 @@ jobs:
 
       - name: 🧭 Set image metadata
         run: |
-          # 镜像名自动跟随仓库（fork 后无需修改）：ghcr.io/<owner>/<repo>
           echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7" >> "$GITHUB_ENV"
+          echo "ARCH_TAG=${{ matrix.arch }}" >> "$GITHUB_ENV"
 
       - name: 🏷️ Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -33,22 +44,53 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 📦 Build and Push (multi-platform)
+      - name: 📦 Build and Push (${{ matrix.arch }})
         run: |
           docker buildx build \
-            --platform ${{ env.PLATFORMS }} \
+            --platform ${{ matrix.platform }} \
             --build-arg GITHUB_SOURCE=${{ github.repository }} \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --provenance=false --sbom=false \
-            -t ${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }} \
             --push \
             .
 
+  # 各平台都构建成功后，合并成多架构 manifest :latest
+  merge:
+    name: Merge multi-arch manifest
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧭 Set image metadata
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: 🔀 Create multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            ${{ env.IMAGE_NAME }}:latest-amd64 \
+            ${{ env.IMAGE_NAME }}:latest-arm64 \
+            ${{ env.IMAGE_NAME }}:latest-armv7
+
       - name: 🔍 Verify manifest
-        if: success()
         run: |
           for i in 1 2 3; do
             sleep 5
