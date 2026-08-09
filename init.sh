@@ -14,6 +14,9 @@ if [ ! -s /etc/supervisor/conf.d/damon.conf ]; then
   CADDY_HTTP_PORT=2052
   WORK_DIR=/dashboard
 
+  # 备份脚本通过 GitHub API 上传备份需要 curl
+  command -v curl >/dev/null 2>&1 || apt-get -y install curl >/dev/null 2>&1
+
   # 如不分离备份的 github 账户，默认与哪吒登陆的 github 账户一致
   GH_BACKUP_USER=${GH_BACKUP_USER:-$GH_USER}
 

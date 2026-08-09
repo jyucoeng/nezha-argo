@@ -185,10 +185,15 @@ if [[ "${DASHBOARD_UPDATE}${CLOUDFLARED_UPDATE}${IS_BACKUP}${FORCE_UPDATE}" =~ t
           if ($i == "path")            { p = $(i+2) }
           else if ($i == "sha" && p ~ /\.tar\.gz$/) { print p, $(i+2); p = "" }
         }
-      }' | sort | tail -n +$((DAYS+1)) | while read -r OLD SHA; do
-      [ -z "$OLD" ] && continue
-      curl -s -o /dev/null -X DELETE -H "$AUTH" -H "Content-Type: application/json" -d "{\"message\":\"delete $OLD\",\"sha\":\"$SHA\"}" "$API/contents/$OLD"
-    done
+      }' | sort > /tmp/backup_list.txt
+    TOTAL=$(wc -l < /tmp/backup_list.txt)
+    if [ "$TOTAL" -gt "$DAYS" ]; then
+      head -n $((TOTAL-DAYS)) /tmp/backup_list.txt | while read -r OLD SHA; do
+        [ -z "$OLD" ] && continue
+        curl -s -o /dev/null -X DELETE -H "$AUTH" -H "Content-Type: application/json" -d "{\"message\":\"delete $OLD\",\"sha\":\"$SHA\"}" "$API/contents/$OLD"
+      done
+    fi
+    rm -f /tmp/backup_list.txt
 
     # 上传与 README 更新都返回 2xx 才算成功
     if [[ "$IS_UPLOAD" =~ ^2[0-9][0-9]$ && "$IS_README" =~ ^2[0-9][0-9]$ ]]; then
