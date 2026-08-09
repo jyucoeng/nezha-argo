@@ -401,10 +401,25 @@ EOF
   # 生成 renew.sh 文件的步骤2 - 在线获取 template/renew.sh 模板生成完整 renew.sh 文件
   wget -qO- ${GH_PROXY}https://raw.githubusercontent.com/jyucoeng/nezha/main/template/renew.sh | sed '1,/^########/d' >> $WORK_DIR/renew.sh
 
-  # 生成定时任务: 1.每天北京时间 3:30:00 更新备份和还原文件，2.每天北京时间 4:00:00 备份一次，并重启 cron 服务； 3.每分钟自动检测在线备份文件里的内容
+  # 生成 sqlite 数据库定时瘦身脚本（vacuum.sh）
+  cat > $WORK_DIR/vacuum.sh << EOF
+#!/usr/bin/env bash
+
+# vacuum.sh 定时压缩 sqlite 数据库瘦身，仅在数据库超过阈值时短暂停面板执行 VACUUM
+
+DB=$WORK_DIR/data/sqlite.db
+VACUUM_MIN_SIZE=52428800
+
+########
+EOF
+  wget -qO- ${GH_PROXY}https://raw.githubusercontent.com/jyucoeng/nezha/main/template/vacuum.sh | sed '1,/^########/d' >> $WORK_DIR/vacuum.sh
+  chmod +x $WORK_DIR/vacuum.sh
+
+  # 生成定时任务: 1.每天北京时间 3:30:00 更新备份和还原文件，2.每天北京时间 4:00:00 备份一次，并重启 cron 服务； 3.每分钟自动检测在线备份文件里的内容； 4.每 3 天 4:05 压缩 sqlite 数据库
   [ -z "$NO_AUTO_RENEW" ] && [ -s $WORK_DIR/renew.sh ] && ! grep -q "$WORK_DIR/renew.sh" /etc/crontab && echo "30 3 * * * root bash $WORK_DIR/renew.sh" >> /etc/crontab
   [ -s $WORK_DIR/backup.sh ] && ! grep -q "$WORK_DIR/backup.sh" /etc/crontab && echo "$BACKUP_TIME root bash $WORK_DIR/backup.sh a" >> /etc/crontab
   [ -s $WORK_DIR/restore.sh ] && ! grep -q "$WORK_DIR/restore.sh" /etc/crontab && echo "* * * * * root bash $WORK_DIR/restore.sh a" >> /etc/crontab
+  [ -s $WORK_DIR/vacuum.sh ] && ! grep -q "$WORK_DIR/vacuum.sh" /etc/crontab && echo "5 4 */3 * * root bash $WORK_DIR/vacuum.sh" >> /etc/crontab
   service cron restart
 
 if [ -n "$UUID" ] && [ "$UUID" != "0" ]; then

@@ -155,6 +155,8 @@ if [[ "${DASHBOARD_UPDATE}${CLOUDFLARED_UPDATE}${IS_BACKUP}${FORCE_UPDATE}" =~ t
       rm -rf $SNAP_DIR
       error "\n Failed to snapshot sqlite.db, stop backup. \n"
     }
+    # 对快照副本执行 VACUUM 瘦身（不影响线上库），减小备份包体积
+    sqlite3 "$SNAP_DIR/data/sqlite.db" 'VACUUM;' 2>/dev/null
     # 复制自定义主题，保持与原备份包相同的 data/ resource/ 目录结构
     [ -d resource ] && find resource/ -type d -name "*custom*" -exec cp -rf --parents {} $SNAP_DIR/ \;
 
