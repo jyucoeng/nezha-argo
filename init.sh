@@ -10,7 +10,7 @@ if [ ! -s /etc/supervisor/conf.d/damon.conf ]; then
   WEB_PORT=8080
   PRO_PORT=${PRO_PORT:-'80'}
   BACKUP_TIME=${BACKUP_TIME:-'0 4 * * *'}
-  BACKUP_NUM= ${BACKUP_NUM:-'5'}
+  BACKUP_NUM=${BACKUP_NUM:-10}
   CADDY_HTTP_PORT=2052
   WORK_DIR=/dashboard
 

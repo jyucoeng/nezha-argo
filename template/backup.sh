@@ -11,7 +11,7 @@ GH_REPO=
 SYSTEM=
 ARCH=
 WORK_DIR=
-DAYS=5
+DAYS=10
 IS_DOCKER=
 DASHBOARD_VERSION=
 
@@ -137,50 +137,18 @@ if [[ "${DASHBOARD_UPDATE}${CLOUDFLARED_UPDATE}${IS_BACKUP}${FORCE_UPDATE}" =~ t
     fi
   fi
 
-  # 克隆备份仓库，压缩备份文件，上传更新
+  # 克隆备份仓库，在线快照数据库，压缩备份文件，上传更新
   if [ "$IS_BACKUP" = 'true' ]; then
-    # 备份前先停掉面板，设置 git 环境变量，减少系统开支
-    if [ "$IS_DOCKER" != 1 ]; then
-      cmd_systemctl disable >/dev/null 2>&1
-      git config --global core.bigFileThreshold 1k
-      git config --global core.compression 0
-      git config --global advice.detachedHead false
-      git config --global pack.threads 1
-      git config --global pack.windowMemory 50m
-    else
-      supervisorctl stop nezha >/dev/null 2>&1
-    fi
-    sleep 10
+    # DAYS 兜底，避免因配置缺失导致保留逻辑失效、备份无限累积
+    : "${DAYS:=10}"
+    git config --global core.bigFileThreshold 1k
+    git config --global core.compression 0
+    git config --global advice.detachedHead false
+    git config --global pack.threads 1
+    git config --global pack.windowMemory 50m
 
-    # 优化数据库，感谢 longsays 的脚本
-    # 1. 导出数据
-    sqlite3 "data/sqlite.db" <<EOF
-.output /tmp/tmp.sql
-.dump
-.quit
-EOF
-
-    # 2. 导入到新库
-    if [ $? -ne 0 ]; then
-      echo "Data export failed!"
-    else
-      sqlite3 "/tmp/new.sqlite.db" <<EOF
-.read /tmp/tmp.sql
-.quit
-EOF
-    fi
-
-    # 3. 检查导入是否成功
-    if [ $? -ne 0 ]; then
-      echo "Data import failed!"
-    else
-      # 覆盖原库并优化
-      mv -f "/tmp/new.sqlite.db" "data/sqlite.db"
-      sqlite3 "data/sqlite.db" 'VACUUM;'
-      [ $? -eq 0 ] && echo "Database migration and optimisation complete!" || echo "Database migration and optimisation failed!"
-      # 清理临时文件
-      rm -f /tmp/tmp.sql
-    fi
+    # 保留数过大时，提示本次备份需要全量同步仓库文件、耗时会更久
+    [ "$DAYS" -gt 24 ] && hint "\n 你设置了 $DAYS 个备份（大于推荐值 24），每次备份需要全量同步仓库中的备份文件，操作耗时会更久，请耐心等待。 \n"
 
     # 克隆现有备份库
     [ -d /tmp/$GH_REPO ] && rm -rf /tmp/$GH_REPO
@@ -188,22 +156,33 @@ EOF
 
     # 压缩备份数据，只备份 data/ 目录下的 config.yaml 和 sqlite.db； resource/ 目录下名字有 custom 的自定义主题文件夹
     if [ -d /tmp/$GH_REPO ]; then
+      # 在线快照 sqlite（.backup 原子安全），不停面板，避免停机窗口与中途重启的风险
+      SNAP_DIR=/tmp/backup_snap
+      rm -rf $SNAP_DIR && mkdir -p $SNAP_DIR/data
+      cp -f data/config.yaml $SNAP_DIR/data/ 2>/dev/null
+      sqlite3 data/sqlite.db ".backup '$SNAP_DIR/data/sqlite.db'" || {
+        rm -rf $SNAP_DIR
+        error "\n Failed to snapshot sqlite.db, stop backup. \n"
+      }
+      # 复制自定义主题，保持与原备份包相同的 data/ resource/ 目录结构
+      [ -d resource ] && find resource/ -type d -name "*custom*" -exec cp -rf --parents {} $SNAP_DIR/ \;
+
       TIME=$(date "+%Y-%m-%d-%H:%M:%S")
       echo "↓↓↓↓↓↓↓↓↓↓ dashboard-$TIME.tar.gz list ↓↓↓↓↓↓↓↓↓↓"
-      [ -d "resource" ] && find resource/ -type d -name "*custom*" | tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz -T- data/ || tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz data/
+      tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz -C $SNAP_DIR data resource 2>/dev/null || tar czvf /tmp/$GH_REPO/dashboard-$TIME.tar.gz -C $SNAP_DIR data
       echo -e "↑↑↑↑↑↑↑↑↑↑ dashboard-$TIME.tar.gz list ↑↑↑↑↑↑↑↑↑↑\n\n"
+      rm -rf $SNAP_DIR
 
-      # 更新备份 Github 库，删除 5 天前的备份
+      # 更新备份 Github 库，仅保留最近 $DAYS 个备份；普通提交，push 只传新增文件
       cd /tmp/$GH_REPO
       [ -e ./.git/index.lock ] && rm -f ./.git/index.lock
       echo "dashboard-$TIME.tar.gz" > README.md
-      find ./ -name '*.gz' | sort | head -n -$DAYS | xargs rm -f
+      find ./ -name 'dashboard-*.tar.gz' | sort | tail -n +$((DAYS+1)) | xargs rm -f
       git config --global user.name $GH_BACKUP_USER
       git config --global user.email $GH_EMAIL
-      git checkout --orphan tmp_work
-      git add .
+      git add -A
       git commit -m "$WAY at $TIME ."
-      git push -f -u origin HEAD:main --quiet
+      git push origin HEAD:main --quiet
       IS_UPLOAD="$?"
       cd ..
       rm -rf $GH_REPO

@@ -339,7 +339,7 @@ dashboard_variables() {
       BACKUP_TIME="0 4 * * *"
   fi
   if [ -z "$BACKUP_NUM" ]; then
-        BACKUP_NUM=5
+        BACKUP_NUM=10
   fi
   [ -z "$AUTO_RENEW_OR_NOT"] && reading "\n (14/14) $(text 41) " AUTO_RENEW_OR_NOT
   grep -qiw 'n' <<< "$AUTO_RENEW_OR_NOT" && IS_AUTO_RENEW=#
