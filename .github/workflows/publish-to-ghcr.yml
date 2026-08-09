@@ -1,0 +1,61 @@
+name: 🐳 publish-to-ghcr
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🧭 Set image metadata
+        id: meta
+        run: |
+          echo "IMAGE_NAME=ghcr.io/jyucoeng/nezha-v0" >> "$GITHUB_ENV"
+          echo "PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7" >> "$GITHUB_ENV"
+
+      - name: 🏷️ Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🔑 Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Build and Push (multi-platform)
+        run: |
+          docker buildx build \
+            --platform ${{ env.PLATFORMS }} \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --provenance=false --sbom=false \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            --push \
+            .
+
+      - name: 🔍 Verify manifest
+        if: success()
+        run: |
+          for i in 1 2 3; do
+            sleep 5
+            if docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:latest >/dev/null 2>&1; then
+              echo "✅ Manifest verified"
+              exit 0
+            fi
+            echo "⚠️  Attempt $i: manifest not ready, retrying..."
+          done
+          echo "❌ Manifest verification failed after 3 retries"
+          exit 1
