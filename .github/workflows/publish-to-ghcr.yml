@@ -1,5 +1,9 @@
 name: 🐳 publish-to-ghcr
 
+env:
+  IMAGE_NAME: ghcr.io/jyucoeng/nezha-v0
+  PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7
+
 on:
   push:
     branches: [ main ]
@@ -15,12 +19,6 @@ jobs:
     steps:
       - name: ⬇️ Checkout Repository
         uses: actions/checkout@v4
-
-      - name: 🧭 Set image metadata
-        id: meta
-        run: |
-          echo "IMAGE_NAME=ghcr.io/jyucoeng/nezha-v0" >> "$GITHUB_ENV"
-          echo "PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7" >> "$GITHUB_ENV"
 
       - name: 🏷️ Set up QEMU
         uses: docker/setup-qemu-action@v3
