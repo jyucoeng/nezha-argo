@@ -1,9 +1,5 @@
 name: 🐳 publish-to-ghcr
 
-env:
-  IMAGE_NAME: ghcr.io/jyucoeng/nezha-argo
-  PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7
-
 on:
   push:
     branches: [ main ]
@@ -19,6 +15,12 @@ jobs:
     steps:
       - name: ⬇️ Checkout Repository
         uses: actions/checkout@v4
+
+      - name: 🧭 Set image metadata
+        run: |
+          # 镜像名自动跟随仓库（fork 后无需修改）：ghcr.io/<owner>/<repo>
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "PLATFORMS=linux/amd64,linux/arm64,linux/arm/v7" >> "$GITHUB_ENV"
 
       - name: 🏷️ Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -37,6 +39,7 @@ jobs:
         run: |
           docker buildx build \
             --platform ${{ env.PLATFORMS }} \
+            --build-arg GITHUB_SOURCE=${{ github.repository }} \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --provenance=false --sbom=false \

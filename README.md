@@ -6,6 +6,50 @@
 
 - 使用前，**请先阅读 [F佬原项目教程](https://github.com/jyucoeng/nezha-argo#f%E4%BD%AC%E5%8E%9F%E9%A1%B9%E7%9B%AE%E6%95%99%E7%A8%8B)** ，了解具体如何部署，本项目仅在一些变量上有所不同。
 
+## 是否需要 Fork
+
+### 直接使用（推荐）
+
+如果你只是想使用本项目，**无需 Fork**，直接使用开发者构建好的镜像即可：
+
+```yaml
+image: ghcr.io/jyucoeng/nezha-argo:latest
+```
+
+镜像地址：`ghcr.io/jyucoeng/nezha-argo`
+
+### 需要 Fork 的情况
+
+只有以下情况才需要 Fork：
+
+- 想自己修改源码（如自定义配置、添加功能）
+- 想自己构建和保存镜像到自己的 GHCR
+- 想通过 GitHub Actions 自动构建和更新镜像
+
+### Fork 后的操作
+
+本项目已把"脚本源仓库"统一收敛成变量，**Fork 后只需修改 2 处默认值**（把 `jyucoeng/nezha-argo` 换成你的仓库名）：
+
+| 文件 | 修改 |
+|---|---|
+| `init.sh`（容器部署） | `GH_SRC=${GH_SRC:-'jyucoeng/nezha-argo'}` → 换成你的仓库 |
+| `dashboard.sh`（VPS 部署） | `GH_SRC=${GH_SRC:-'jyucoeng/nezha-argo'}` → 换成你的仓库 |
+
+其余部分会自动跟随，无需修改：
+
+- `Dockerfile`：entrypoint 使用 `ARG GITHUB_SOURCE`，由 workflow 自动传入你的仓库
+- `.github/workflows/publish-to-ghcr.yml`：镜像名自动生成为 `ghcr.io/<你的用户名>/<仓库名>:latest`
+- `renew.sh`：脚本每日同步源自动使用你设置的 `GH_SRC`
+
+#### 构建和发布镜像
+
+在 Fork 仓库开启 GitHub Actions 后，推送 `main` 分支即会自动：
+
+1. 构建多架构 Docker 镜像（amd64 / arm64 / arm/v7）
+2. 发布到 `ghcr.io/<你的用户名>/<仓库名>:latest`
+
+只需 push 代码，无需手动操作。
+
 <details>
   <summary>更新日志</summary>
 
